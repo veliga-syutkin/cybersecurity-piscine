@@ -109,4 +109,32 @@ compare: all
 	@echo "ft_otp:   $$($(PROGRAM) -k $(KEY_FILE))"
 	@echo "oathtool: $$(oathtool --totp $$(cat key.hex))"
 
-.PHONY: clear test test_bonus compare
+# The whole show, in one go, on a NEW random key each time:
+#	1) the subject's example: a bad key refused, a 64-hex key saved, a code
+#	2) the same code from oathtool (skipped if oathtool is missing)
+#	3) bonus: the QR code of that key, to scan with a phone
+# The key comes from /dev/urandom through od (no openssl needed). The demo
+# files are removed at the end; ft_otp.key stays, for -k or --gui after.
+DEMO_BAD =	demo_bad.txt
+DEMO_KEY =	demo_key.hex
+
+demo: all bonus
+	@echo "\n== 1. Subject example ==\n"
+	printf "NEVER GONNA GIVE YOU UP" > $(DEMO_BAD)
+	@echo "$(PROGRAM) -g $(DEMO_BAD)"
+	@$(PROGRAM) -g $(DEMO_BAD) || true
+	od -An -tx1 -N32 /dev/urandom | tr -d ' \n' > $(DEMO_KEY)
+	cat $(DEMO_KEY) | wc -c
+	$(PROGRAM) -g $(DEMO_KEY)
+	$(PROGRAM) -k $(KEY_FILE)
+	@echo "\n== 2. Same key, same 30 s window: oathtool ==\n"
+	@if command -v oathtool >/dev/null; then \
+		echo "ft_otp:   $$($(PROGRAM) -k $(KEY_FILE))"; \
+		echo "oathtool: $$(oathtool --totp $$(cat $(DEMO_KEY)))"; \
+	else echo "oathtool not installed: skipped"; fi
+	@echo "\n== 3. Bonus: QR code of $(KEY_FILE), scan it ==\n"
+	./$(NAME_BONUS) -q $(KEY_FILE)
+	@echo "Phone, ft_otp and oathtool show: $$($(PROGRAM) -k $(KEY_FILE))"
+	@$(RM) $(DEMO_BAD) $(DEMO_KEY)
+
+.PHONY: clear test test_bonus compare demo

@@ -11,6 +11,8 @@ file and prints a new 6-digit code every 30 seconds, the same codes as
 make        # builds with cargo and copies the binary to ./ft_otp
 make test   # RFC 4226 / RFC 6238 test vectors and key checks
 make compare  # ft_otp next to oathtool, from ./key.hex
+make demo  # on a new random key: the subject's example, oathtool's code
+           # next to ours, and the bonus QR code of the key
 make bonus  # builds ./ft_otp_bonus (QR code, GUI), ./ft_otp is left as it is
             # (first build: a few minutes, ~1 GB in target/, because of eframe)
 make test_bonus # the same tests inside ft_otp_bonus, plus base32 / URI
