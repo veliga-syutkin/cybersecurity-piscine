@@ -425,8 +425,9 @@ used through Claude Code). How it was used, and who did what:
   presented with their trade-offs.
 - Choice of Rust, checks on the school machines, review and validation of the
   code and documents.
-- Tests on a school machine: `make demo` runs, and `oathtool --totp` gives
-  the same code as `ft_otp`.
+- Tests on a school machine: `make demo` runs, `oathtool --totp` gives the
+  same code as `ft_otp`, the QR code scanned with Google Authenticator gives
+  the same code too, and the `--gui` window works (passphrase, Copy, errors).
 
 **How it is kept honest**
 
