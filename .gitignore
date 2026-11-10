@@ -1,0 +1,7 @@
+# Subjects (property of 42)
+*.pdf
+
+# Local notes and assistant instructions (not part of the projects)
+/CLAUDE.md
+/correction_*.md
+.claude/
