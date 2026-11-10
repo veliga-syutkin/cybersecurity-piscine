@@ -163,6 +163,112 @@ Sources: `src/totp.rs` (steps 1-4), `src/key.rs` (hex validation and
 decoding), `src/storage.rs` (encrypted key file), `src/options.rs` (command
 line), `src/errors.rs` (messages), `src/main.rs` (wiring).
 
+## How the bonus works
+
+### One project, two binaries
+
+`make` builds `ft_otp` from `src/`; `make bonus` builds `ft_otp_bonus` from
+`src_bonus/`. The bonus does not copy the mandatory code: its `main.rs`
+includes the files of `src/` as its own modules,
+
+```rust
+#[path = "../src/totp.rs"]
+mod totp;
+```
+
+so both binaries compute codes and handle key files with the very same
+code. The bonus crates (`qrcode`, `eframe`) are declared `optional` in
+`Cargo.toml` and enabled only by the `bonus` feature, which `make bonus`
+passes (`--features bonus`): `make` never downloads nor compiles them.
+
+### Seed generation (`-s`)
+
+1. 32 random bytes are read from the kernel (`getrandom`, the
+   `getrandom(2)` system call): 64 hex characters, the subject's minimum.
+2. They go through `storage::save_key`, exactly like a key given to `-g`:
+   encrypted in `ft_otp.key`, with machine-id or a passphrase (`-p`).
+3. The QR code of the new key is shown.
+
+The new key only exists in memory and, encrypted, in `ft_otp.key`: it is
+never written in clear (except in the SVG, and only with `--svg`).
+
+### What the QR code contains
+
+An authenticator app does not read hex: it reads an `otpauth://` URI
+(Google Authenticator's "Key Uri Format"):
+
+```
+otpauth://totp/ft_otp:<user>?secret=<base32 key>&issuer=ft_otp&algorithm=SHA1&digits=6&period=30
+```
+
+- `totp` and `period=30`: the counter is the time, one step every 30 s;
+- `algorithm=SHA1` and `digits=6`: HMAC-SHA1, 6-digit codes;
+- `ft_otp:<user>` and `issuer`: the name shown in the app (`$USER`,
+  percent-encoded: a space becomes `%20`);
+- `secret`: the key, in **base32**.
+
+`digits` and `period` are taken from the constants of `src/totp.rs`, so the
+phone is told exactly the settings `ft_otp` uses, and computes the same codes.
+
+### Base32, by hand (`src_bonus/qr.rs`)
+
+Base32 (RFC 4648) writes bytes with 32 symbols, `A`-`Z` then `2`-`7`: each
+symbol carries **5 bits** (2^5 = 32), where a hex digit carries 4. Bytes come
+in 8 bits at a time and leave 5 bits at a time, from the left:
+
+```
+"f"  = 0x66 = 0110 0110
+regrouped by 5:  01100 | 110 + 00 (padding with zeros)
+                  = 12 |  24
+                  =  M |   Y            -> "MY"
+```
+
+The code keeps a small bit buffer: push a byte (8 bits in), take 5-bit
+groups out while there are at least 5, and at the end pad the last bits
+with zeros on the right. The `=` padding of RFC 4648 is left out, as the
+`otpauth` format expects. The tests check the RFC 4648 vectors (`"foobar"`
+→ `MZXW6YTBOI`) and the full URI of the RFC 4226 test key.
+
+### Drawing the QR code
+
+The `qrcode` crate turns the URI into a grid of black and white squares
+("modules"); `ft_otp` only draws that grid.
+
+- **Terminal:** one character is twice as high as wide, so each character
+  draws two modules, one above the other, with `▀` (upper half block): its
+  text color paints the top module, its background the bottom one. Colors
+  are forced with ANSI codes (black on white), so the code scans on dark
+  and light terminals alike. A 4-module white margin (the "quiet zone"
+  required by ISO 18004) is added around it, or scanners fail.
+- **SVG (`--svg`):** rendered by `qrcode` itself into `ft_otp_qr.svg`,
+  written with permissions `0600` since it holds the key in clear.
+- **Window:** painted as white and black rectangles by egui.
+
+### The graphical interface (`--gui`)
+
+`eframe` opens the window and calls `App::ui` at each frame; egui is an
+**immediate mode** GUI: `ui` redraws the whole window from the app's
+fields every time, and a button is just `if ui.button("Copy").clicked()`.
+No widget keeps its own state, so nothing can get out of sync.
+
+- **Loading a key file** (Load button or Enter), the GUI version of `-k`:
+  1. `storage::needs_passphrase` reads the file's mode byte;
+  2. if a passphrase is needed and none is typed, the hidden field is shown
+     and the GUI waits;
+  3. `storage::load_key` decrypts it with machine-id or the typed passphrase
+     (passed as `-p=x` would be: the terminal prompt is never used), then
+     the passphrase is cleared.
+- **The code** is recomputed with `totp::totp_now` at every frame, and the
+  seconds left are `30 - (unix_time mod 30)`. The window asks for a new
+  frame every 250 ms (`request_repaint_after`), so the code and the bar
+  change by themselves, without any timer or thread.
+- **Copy** puts the code in the clipboard; **Show QR code** builds the QR
+  code of the loaded key and paints it below.
+
+Sources: `src_bonus/main.rs` (wiring), `src_bonus/options_bonus.rs`
+(command line), `src_bonus/qr.rs` (base32, URI, terminal and SVG drawing),
+`src_bonus/gui.rs` (window).
+
 ## Design choices
 
 **Language and build**
@@ -319,6 +425,8 @@ used through Claude Code). How it was used, and who did what:
   presented with their trade-offs.
 - Choice of Rust, checks on the school machines, review and validation of the
   code and documents.
+- Tests on a school machine: `make demo` runs, and `oathtool --totp` gives
+  the same code as `ft_otp`.
 
 **How it is kept honest**
 
