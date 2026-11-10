@@ -1,0 +1,6 @@
+/target/
+/.cargo-home/
+/ft_otp
+/ft_otp.key
+/ft_otp_bonus
+/ft_otp_qr.svg

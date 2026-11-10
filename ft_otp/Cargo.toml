@@ -1,0 +1,30 @@
+[package]
+name = "ft_otp"
+version = "1.0.0"
+edition = "2021"
+
+# Crypto primitives only (RustCrypto): the TOTP/HOTP logic is written by hand.
+[dependencies]
+hmac = "0.12"      # HMAC (RFC 2104), used with SHA-1 as HOTP asks
+sha1 = "0.10"      # SHA-1, the hash inside HMAC-SHA1
+aes-gcm = "0.10"   # AES-256-GCM: encrypts ft_otp.key
+argon2 = "0.5"     # Argon2id: turns machine-id / passphrase into an AES key
+getrandom = "0.2"  # random salt and nonce, straight from the kernel
+rpassword = "7"    # hidden passphrase input (no echo)
+
+# Bonus only: optional, so "make" (ft_otp) never builds them.
+qrcode = { version = "0.14", optional = true, default-features = false, features = ["svg"] }
+eframe = { version = "0.35", optional = true } # --gui window (egui), needs rustc >= 1.92
+
+[features]
+bonus = ["dep:qrcode", "dep:eframe"]
+
+[[bin]]
+name = "ft_otp"
+path = "src/main.rs"
+
+# Built by "make bonus" only (cargo build --features bonus)
+[[bin]]
+name = "ft_otp_bonus"
+path = "src_bonus/main.rs"
+required-features = ["bonus"]
