@@ -1,0 +1,7 @@
+# Tor configuration of the test client: a plain Tor client, like the one
+# inside Tor Browser. curl and ssh reach .onion addresses through its SOCKS
+# proxy; the connection goes through the real Tor network.
+User debian-tor
+DataDirectory /var/lib/tor
+SocksPort 127.0.0.1:9050
+Log notice stdout

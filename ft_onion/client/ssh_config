@@ -1,0 +1,11 @@
+# ssh settings of the test client for .onion hosts.
+Host *.onion
+	# ssh cannot speak SOCKS: netcat opens the connection through tor's
+	# SOCKS5 proxy (-X 5) and gives tor the .onion name to resolve.
+	ProxyCommand nc -X 5 -x 127.0.0.1:9050 %h %p
+	# Private key copied in by "make ssh" (never stored in the image).
+	IdentityFile /root/.ssh/id_ed25519
+	IdentitiesOnly yes
+	# The client container starts with an empty known_hosts: trust the
+	# server's host key on first use, refuse it if it changes afterwards.
+	StrictHostKeyChecking accept-new

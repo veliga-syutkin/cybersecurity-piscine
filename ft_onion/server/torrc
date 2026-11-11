@@ -1,0 +1,33 @@
+# Tor configuration of the ft_onion server: publishes nginx and sshd as a
+# v3 hidden service (onion service).
+
+# tor is started as root by entrypoint.sh, then drops its privileges to this
+# Debian system user, which owns /var/lib/tor.
+User debian-tor
+DataDirectory /var/lib/tor
+
+# This tor only publishes a service: it is not a client proxy for anyone.
+SocksPort 0
+
+# Logs go to the container logs (docker logs).
+Log notice stdout
+
+# The hidden service keys and the "hostname" file (the .onion address) live
+# here. This directory is a named Docker volume, so the address survives
+# restarts and rebuilds. tor refuses to start if it is not 0700 and owned by
+# debian-tor (set in the Dockerfile).
+HiddenServiceDir /var/lib/tor/hidden_service/
+
+# <port on the .onion address>  <where tor forwards it, inside the container>
+# nginx and sshd only listen on 127.0.0.1: tor is the only way in, and no
+# port is published on the host.
+HiddenServicePort 80 127.0.0.1:80
+HiddenServicePort 4242 127.0.0.1:4242
+
+# Denial-of-service defenses (bonus). Per-IP tools cannot work here (every
+# visitor is 127.0.0.1), so the protection happens inside Tor:
+# - the introduction points rate-limit the connection requests they relay;
+# - under load, clients must solve a proof-of-work puzzle, and the service
+#   serves the ones that did the most work first.
+HiddenServiceEnableIntroDoSDefense 1
+HiddenServicePoWDefensesEnabled 1

@@ -1,0 +1,69 @@
+# sshd configuration of the ft_onion server. It replaces the whole
+# /etc/ssh/sshd_config, including Debian's "Include sshd_config.d/*.conf"
+# line: no drop-in file can silently override these settings.
+
+# Loopback only: SSH is reachable through tor (HiddenServicePort 4242 in
+# torrc), never through the container's network interface.
+Port 4242
+ListenAddress 127.0.0.1
+
+# Key-only login, for a non-root user. The key pair is generated on the host
+# by "make"; the public key is installed in ~/.ssh/authorized_keys at build.
+PermitRootLogin no
+PubkeyAuthentication yes
+AuthorizedKeysFile .ssh/authorized_keys
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+PermitEmptyPasswords no
+
+# No PAM: nothing in this container needs it. The user's password field is
+# "*" (no password, but not "locked"), which sshd accepts for key login.
+UsePAM no
+
+# Only this account may log in, even if another one appears in the image.
+AllowUsers vsyutkin
+
+# Three tries per connection, then sshd closes it.
+MaxAuthTries 3
+
+# No forwarding of any kind (TCP ports, agent, X11, stream local sockets):
+# a logged-in user cannot use the container as a relay (ssh -L / -R / -D).
+# DisableForwarding alone is enough; the explicit switches below make
+# "sshd -T" show "no" for each of them too.
+DisableForwarding yes
+AllowTcpForwarding no
+AllowAgentForwarding no
+AllowStreamLocalForwarding no
+X11Forwarding no
+PermitTunnel no
+
+# Slow or flooding clients: 20 s to authenticate, and above 3 unauthenticated
+# connections, sshd starts dropping new ones (50 % chance, 100 % from 10).
+LoginGraceTime 20
+MaxStartups 3:50:10
+
+# OpenSSH >= 9.8 penalizes a source address after failed logins. Behind Tor,
+# every connection comes from 127.0.0.1: one attacker would get everybody
+# blocked. Same reason as for not using fail2ban.
+PerSourcePenalties no
+
+# Modern algorithms only. ed25519 host key (the RSA and ECDSA ones are
+# deleted in the Dockerfile) and user keys; post-quantum hybrid key
+# exchanges; authenticated encryption (AEAD) ciphers; encrypt-then-MAC MACs.
+HostKey /etc/ssh/ssh_host_ed25519_key
+HostKeyAlgorithms ssh-ed25519
+PubkeyAcceptedAlgorithms ssh-ed25519
+KexAlgorithms mlkem768x25519-sha256,sntrup761x25519-sha512
+Ciphers chacha20-poly1305@openssh.com,aes256-gcm@openssh.com
+MACs hmac-sha2-512-etm@openssh.com,hmac-sha2-256-etm@openssh.com
+
+# Do not append the Debian package version to the SSH banner (the OpenSSH
+# version itself is part of the protocol and cannot be hidden).
+DebianBanner no
+
+PrintMotd no
+
+# No "Subsystem sftp" line, on purpose: no sftp, and no scp either (it uses
+# the SFTP protocol since OpenSSH 9.0). This reduces the code exposed; it is
+# not a barrier against a logged-in user, who can still copy a file with
+# "ssh host 'cat > file' < file".

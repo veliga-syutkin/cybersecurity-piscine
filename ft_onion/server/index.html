@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="utf-8">
+	<title>Hello Dark Web!</title>
+</head>
+<body>
+	<h1>Hello Dark Web!</h1>
+	<p>
+		This page is served by nginx, inside a Docker container, as a Tor
+		hidden service. Neither you nor this server knows the other's IP
+		address.
+	</p>
+
+	<h2>How does the .onion address prove who you are talking to?</h2>
+	<noscript>
+		<p>
+			This demo needs JavaScript. Tor Browser's "Safest" level disables
+			it: switch to "Safer" or "Standard" to try it.
+		</p>
+	</noscript>
+	<p>
+		A toy model: colors are (R, G, B) triples, and one <em>mixing step</em>
+		multiplies the current color by the starting color, channel by
+		channel, modulo 251. Mixing is easy; finding how many steps were
+		applied, from the result, is meant to be impossible.
+	</p>
+	<p>
+		Starting color Y (public):
+		<canvas id="y" width="48" height="24"></canvas> <span id="y-text"></span>
+	</p>
+	<p>
+		<label for="secret">Owner's secret number of steps x (1 to 249):</label>
+		<input id="secret" type="number" min="1" max="249" value="123">
+	</p>
+	<p>
+		The address X = Y after x steps (public):
+		<canvas id="x" width="48" height="24"></canvas> <span id="x-text"></span>
+	</p>
+	<p>
+		<input id="impostor" type="checkbox">
+		<label for="impostor">The answer comes from an impostor, who does not know x and guesses it</label>
+		<br>
+		<input id="no-k" type="checkbox">
+		<label for="no-k">Skip step 1 (no random steps): see why it is needed</label>
+	</p>
+	<p><button id="run" type="button">Run a challenge</button></p>
+
+	<ol>
+		<li>
+			Owner: picks fresh random steps k (kept secret) and shows R = Y after k steps:
+			<canvas id="r" width="48" height="24"></canvas> <span id="r-text"></span>
+		</li>
+		<li>You: send a random challenge c: <span id="c-text"></span></li>
+		<li>Owner: answers s = k + c &times; x mod 250: <span id="s-text"></span></li>
+	</ol>
+	<p>
+		Your check, with public values only:
+		<br>
+		Y after s steps:
+		<canvas id="left" width="48" height="24"></canvas> <span id="left-text"></span>
+		<br>
+		R mixed with (X after c steps):
+		<canvas id="right" width="48" height="24"></canvas> <span id="right-text"></span>
+	</p>
+	<p><strong id="verdict"></strong></p>
+	<p id="leak"></p>
+
+	<p>
+		The real thing uses an elliptic curve (ed25519) instead of colors,
+		and about 2<sup>252</sup> possible secrets instead of 250.
+	</p>
+<script>
+"use strict";
+
+// Toy model: see the "RGB toy example" section of the README.
+const P = 251;               // prime modulus: channel values stay in 1..250
+const N = 250;               // number of distinct step counts (P - 1)
+const Y = [239, 199, 30];    // starting color, public
+
+// base^exp mod P, by square-and-multiply.
+function power(base, exp) {
+	let result = 1;
+	exp = ((exp % N) + N) % N;
+	base %= P;
+	while (exp > 0) {
+		if (exp & 1)
+			result = result * base % P;
+		base = base * base % P;
+		exp = Math.floor(exp / 2);
+	}
+	return result;
+}
+
+// A color after n mixing steps from Y.
+function mix(color, n) {
+	return color.map(function (v) { return power(v, n); });
+}
+
+// Two colors mixed together, channel by channel.
+function combine(a, b) {
+	return a.map(function (v, i) { return v * b[i] % P; });
+}
+
+function sameColor(a, b) {
+	return a[0] === b[0] && a[1] === b[1] && a[2] === b[2];
+}
+
+function hex(color) {
+	return "#" + color.map(function (v) {
+		return v.toString(16).padStart(2, "0").toUpperCase();
+	}).join("");
+}
+
+// Uniform-enough random integer in [min, max], from the browser's CSPRNG.
+function randomInt(min, max) {
+	const buffer = new Uint32Array(1);
+	crypto.getRandomValues(buffer);
+	return min + buffer[0] % (max - min + 1);
+}
+
+// A challenge must have an inverse modulo 250 (odd, not a multiple of 5):
+// this is what lets the "no step 1" mode recover the secret.
+function randomChallenge() {
+	let c;
+	do {
+		c = randomInt(2, N - 1);
+	} while (c % 2 === 0 || c % 5 === 0);
+	return c;
+}
+
+function inverse(c) {
+	for (let d = 1; d < N; d++)
+		if (c * d % N === 1)
+			return d;
+	return 0;
+}
+
+function paint(id, color) {
+	const canvas = document.getElementById(id);
+	const context = canvas.getContext("2d");
+	context.fillStyle = "rgb(" + color.join(",") + ")";
+	context.fillRect(0, 0, canvas.width, canvas.height);
+	document.getElementById(id + "-text").textContent =
+		"(" + color.join(", ") + ") " + hex(color);
+}
+
+function text(id, value) {
+	document.getElementById(id).textContent = value;
+}
+
+function readSecret() {
+	const input = document.getElementById("secret");
+	let x = Math.round(Number(input.value));
+	if (!Number.isFinite(x) || x < 1)
+		x = 1;
+	if (x > N - 1)
+		x = N - 1;
+	input.value = x;
+	return x;
+}
+
+function showAddress() {
+	paint("x", mix(Y, readSecret()));
+}
+
+function runChallenge() {
+	const x = readSecret();
+	const X = mix(Y, x);
+	const impostor = document.getElementById("impostor").checked;
+	const noK = document.getElementById("no-k").checked;
+
+	// The impostor uses a wrong guess of x.
+	let used = x;
+	while (impostor && used === x)
+		used = randomInt(1, N - 1);
+
+	const k = noK ? 0 : randomInt(1, N - 1);
+	const R = mix(Y, k);
+	const c = randomChallenge();
+	const s = (k + c * used) % N;
+
+	paint("r", R);
+	text("c-text", String(c));
+	text("s-text", k + " + " + c + " × " + used + " mod 250 = " + s
+		+ (impostor ? "  (impostor's guess: " + used + ")" : ""));
+
+	const left = mix(Y, s);
+	const right = combine(R, mix(X, c));
+	paint("left", left);
+	paint("right", right);
+	text("verdict", sameColor(left, right)
+		? "Colors match: the answer comes from the owner of x."
+		: "Colors differ: whoever answered does not know x.");
+
+	text("leak", noK && !impostor
+		? "Without step 1, s = c × x mod 250, so anyone can divide by c: "
+			+ s + " × " + inverse(c) + " mod 250 = " + (s * inverse(c) % N)
+			+ ", the secret."
+		: "");
+}
+
+paint("y", Y);
+showAddress();
+document.getElementById("secret").addEventListener("change", showAddress);
+document.getElementById("run").addEventListener("click", runChallenge);
+</script>
+</body>
+</html>
