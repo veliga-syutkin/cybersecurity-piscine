@@ -323,6 +323,52 @@ Mallory's own swatch would be `Y` after 173 steps, `#383E13`, a different
 color, and he cannot answer for `#3DE546` without `x`. The client drops the
 connection on day one, not after.
 
+### The first handshake, step by step
+
+How Tor actually turns the address into an established, encrypted
+connection, with paint first and the real names in brackets. The service's
+long-term secret is `x`, its swatch (the address) is `X`.
+
+1. **Alice reads Bob's official notebook** (the *descriptor*, fetched from
+   the hidden service directories). It lists where Bob can be contacted
+   (the *introduction points*) and, for each one, a **ready-made mixture**
+   of Bob's (the introduction point's *ntor encryption key*). The notebook
+   is sealed by a chain of keys leading back to `X`: if Mallory swaps the
+   ready-made mixture for his own, the seal no longer matches the swatch,
+   and Alice throws the notebook away before sending anything.
+2. **Alice chooses a meeting place** (a *rendezvous point*, a Tor relay she
+   picks) and leaves a secret token there (the *rendezvous cookie*).
+3. **Alice writes the first message** (*INTRODUCE1*): the meeting place and
+   the token. She takes Bob's ready-made mixture, adds a fresh secret paint
+   of her own, paints the message with the resulting color (encrypts it),
+   and sends it through the introduction point, together with her own public
+   mixture (fresh secret + public paint).
+4. **Only Bob can read it.** Adding his secret paint to Alice's public
+   mixture gives him the same color, so he can read where to meet her. An
+   impostor gets another color: the message stays unreadable, and he does
+   not even know where to go.
+5. **Bob answers at the meeting place** (*RENDEZVOUS1*): the token, a
+   **fresh throwaway mixture** of his own, and a **seal** (the *AUTH* value,
+   a MAC) that can only be made with the colors computed in steps 3 and 4.
+6. **Alice checks the seal.** Only someone who could read step 3 can make
+   it: if it matches, it is Bob. Both sides now build the session key from
+   *both* mixtures (the ready-made one and the throwaway one), then throw
+   the throwaway paints away.
+7. **The conversation starts.** The meeting place joins the two circuits;
+   everything that follows (the HTTP request, the SSH session) is encrypted
+   end to end with the session key. Neither side ever learned the other's
+   IP address: each one only knows its own half of the path.
+
+Why both mixtures: the ready-made one proves it is Bob (only he can read
+step 3), the throwaway one gives **forward secrecy** (once its paints are
+thrown away, even a later theft of Bob's long-term keys cannot recreate the
+session key of a recorded conversation).
+
+For comparison, SSH orders things differently: both sides send throwaway
+mixtures first, then the server **signs** the exchange with its host key.
+The result is the same (a shared key, and proof of who the server is), and
+here the SSH handshake runs *inside* the Tor connection built above.
+
 ### What this does *not* protect against
 
 The risk moves from the first exchange to **the swatch itself**. The
@@ -545,8 +591,9 @@ used through Claude Code). How it was used, and who did what:
   affected.
 - Wrote this README, including the RGB toy example, the Diffie-Hellman /
   man-in-the-middle section and its extension to the first exchange
-  (including what the address contains and what it does not), values
-  computed with a short script and checked.
+  (including what the address contains and what it does not), and the
+  step-by-step first handshake; values computed with a short script and
+  checked.
 - The section *How a `.onion` address proves who you're talking to* (the
   color-mixing analogy) was written by Claude on claude.ai, in the form the
   author asked for; the author added it to this README. Claude Code then
@@ -563,7 +610,10 @@ used through Claude Code). How it was used, and who did what:
   reference; the paint diagram (`diffie_hellman.webp`) was made by the author
   from that video, and the author asked for the section explaining why a man
   in the middle cannot decrypt the messages, then raised the question of the
-  first exchange and asked for the paint example to cover it.
+  first exchange and asked for the paint example to cover it; worked out
+  the core of the first handshake (the client encrypts its first message
+  with the service's ready-made mixture plus its own secret, and only the
+  real service can read it), which the step-by-step section builds on.
 - Checks on a school machine (rootless Docker, Tor reachable), review and
   validation of the code and documents.
 
