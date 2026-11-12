@@ -218,15 +218,123 @@ check (a Schnorr signature, the basis of ed25519; in a signature, nobody
 sends the challenge: it is a hash of `R` and of the signed message, so
 anyone can check it later, without any back-and-forth).
 
+### Getting a shared key: Diffie-Hellman
+
+Proving who the service is is not enough: the two sides also need a secret
+key to encrypt everything that follows, and they have to agree on it over a
+network where anyone may be listening.
+
+<p align="center">
+  <img src="diffie_hellman.webp" alt="Diffie-Hellman key exchange shown with paint: a public color, a private color on each side, the two mixtures exchanged, and the same shared key obtained on both sides" width="220">
+</p>
+<p align="center"><em>Diffie-Hellman key exchange with paint, based on
+<a href="https://youtu.be/aoag03mSuXQ?t=771">Veritasium's video</a>.</em></p>
+
+Each side mixes the public paint with its own private paint and sends the
+mixture. Each side then adds its private paint to the mixture it received.
+Both end up with the same color, the **shared key**, made of the public paint
+and both private paints, and neither private paint ever crossed the network.
+
+### Why a man in the middle cannot decrypt the messages
+
+**A listener (passive attacker) sees three things**: the public paint, and
+the two mixtures (public + Alice's private, public + Bob's private). To get
+the shared key, he would need one of the private paints, and unmixing is
+impossible. Mixing the two mixtures together does not help either: it gives
+public + public + both privates, which has the public paint *twice*, so it is
+a different color.
+
+With the RGB toy model of the previous section (here, "adding a private
+paint" to a color means applying it that many times: shared key =
+`Y` after `a × b` steps):
+
+| | Value | RGB | Hex |
+|---|---|---|---|
+| Alice's private | `a = 37` | | |
+| Bob's private | `b = 91` | | |
+| Alice sends `A` = `Y` after 37 steps | public | `(165, 42, 107)` | `#A52A6B` |
+| Bob sends `B` = `Y` after 91 steps | public | `(120, 37, 62)` | `#78253E` |
+| Alice: `B` after 37 steps of `B` | shared key | `(72, 178, 158)` | `#48B29E` |
+| Bob: `A` after 91 steps of `A` | shared key | `(72, 178, 158)` | `#48B29E` |
+| Listener: `A` mixed with `B` | `Y` after 37 + 91 = 128 steps, not 37 × 91 | `(222, 48, 108)` | `#DE306C` |
+
+**Once the shared key exists**, both sides derive symmetric keys from it and
+every message is encrypted and authenticated with them (Tor uses AES for the
+relay layers; SSH, here, ChaCha20-Poly1305). Without the key, the listener
+only sees noise; and any modified byte makes the authentication check fail,
+so he cannot change messages either.
+
+**An active attacker can try something else**: stand in the middle and run
+one exchange with each side, with his own private paint (`m = 173`). Alice
+then shares `#969E7F` with him, Bob shares `#6FDC1D` with him, and he
+decrypts and re-encrypts everything. Plain Diffie-Hellman cannot detect this:
+nothing proves *whose* mixture arrived. This is where the address comes in:
+
+- the service's mixture is tied to the service's key, through the descriptor
+  signed with the key contained in the `.onion` address, and through the
+  handshake (Tor's `hs-ntor`), whose answer includes a proof that only the
+  holder of that key can compute (see
+  [the RGB challenge above](#the-same-idea-with-real-rgb-numbers-toy-example));
+- an attacker who replaces the service's mixture with his own cannot produce
+  that proof, and the client drops the connection.
+
+So: Diffie-Hellman gives a key nobody else can compute, and the `.onion`
+address proves whose key it is. Together, a man in the middle can neither
+read nor impersonate.
+
+**Bonus: forward secrecy.** The private paints of each connection are fresh,
+and thrown away afterwards. Even if the service's long-term key were stolen
+later, recorded past conversations could not be decrypted: their shared keys
+no longer exist anywhere.
+
+### The first exchange decides everything
+
+The active attack above only works if the man in the middle is there **from
+the very first exchange**. Once Alice and Bob share a key without him, he
+arrives too late: he does not know the key, and every later message is
+encrypted and authenticated with it. So the real question is: **the first
+time Alice meets Bob, how does she know which mixture is his?**
+
+In paint terms: Mallory stands between them on day one, hands Alice his own
+mixture (public + `m`) and says "this is Bob's". The jar looks like any other
+jar of paint. Three ways to deal with it:
+
+| System | How the first mixture is checked | In paint terms | Weak spot |
+|---|---|---|---|
+| HTTPS | a certificate authority signs the site's key | a notary stamps Bob's jar | you trust the notaries |
+| SSH (*trust on first use*) | not at all the first time; the host key is remembered and must not change afterwards | Alice notes the color of the jar's label the first time, and refuses a different one later | Mallory on day one wins, and stays |
+| Tor v3 (`.onion`) | the address **is** the service's public key | Alice already carries a swatch of Bob's public color (the address `X`) before ever meeting him | getting the right swatch |
+
+What the swatch contains, exactly: only `X`, the service's long-term
+mixture (public key), plus the checksum and version byte. The starting color
+`Y` is not in the address: it is a constant of the protocol (the base point
+of the ed25519 curve), the same for every service and built into every Tor
+client. The Diffie-Hellman mixtures are not in it either: they are fresh for
+each connection, so they cannot be known in advance. They are tied to `X` by
+a proof instead: the descriptor is signed by a chain of keys leading back to
+`X`, and the `hs-ntor` answer can only be computed with a key that this
+descriptor vouches for.
+
+With a `.onion` address, there is no unchecked first exchange. Before
+trusting a mixture, Alice runs the challenge of
+[the RGB example](#the-same-idea-with-real-rgb-numbers-toy-example) against
+her swatch `X = #3DE546`: only the owner of `x = 123` answers correctly.
+Mallory's own swatch would be `Y` after 173 steps, `#383E13`, a different
+color, and he cannot answer for `#3DE546` without `x`. The client drops the
+connection on day one, not after.
+
 ### What this does *not* protect against
 
-The protocol guarantees you are talking to the owner of the address you
-typed. It cannot tell you whether that address is the one you *meant* to
-visit. A lookalike address (generated by brute force to share the same first
-characters) is a perfectly valid address belonging to someone else. Always get
-`.onion` addresses from a trusted source: the organization's official HTTPS
-site (Onion-Location header), a PGP-signed message, or a bookmark you made
-after verifying it once.
+The risk moves from the first exchange to **the swatch itself**. The
+protocol guarantees you are talking to the owner of the address you typed.
+It cannot tell you whether that address is the one you *meant* to visit. If
+Mallory hands Alice a swatch of `#383E13` and says "this is Bob's color",
+every check passes, perfectly securely, with Mallory: a phishing link, a
+fake directory entry, or a lookalike address (generated by brute force to
+share the same first characters) is a perfectly valid address belonging to
+someone else. Always get `.onion` addresses from a trusted source: the
+organization's official HTTPS site (Onion-Location header), a PGP-signed
+message, or a bookmark you made after verifying it once.
 
 ## Bonus
 
@@ -394,6 +502,15 @@ page computes the secret back from the answer).
 - A second small container (tor + curl + ssh) started by `make`: HTTP and
   SSH are tested the same way at home and at school, without root and
   without installing anything on the host.
+- `StrictHostKeyChecking accept-new` in `client/ssh_config`: the client
+  container starts with an empty `known_hosts`, so the first `make ssh`
+  accepts the server's host key without checking it (trust on first use),
+  and refuses it if it changes afterwards. Over the Internet, this would
+  leave the first connection open to a man in the middle. Here, the
+  connection goes through a Tor circuit to the `.onion` address, which is
+  already authenticated by the address itself (see
+  [The first exchange decides everything](#the-first-exchange-decides-everything)):
+  nobody in between can present a fake host key.
 
 ## AI usage
 
@@ -426,8 +543,10 @@ used through Claude Code). How it was used, and who did what:
 - Looked up the "SSHole" vulnerability (CVE-2026-123158) when the author
   asked about it, and checked in the container why this setup is not
   affected.
-- Wrote this README, including the RGB toy example (values computed with a
-  short script and checked).
+- Wrote this README, including the RGB toy example, the Diffie-Hellman /
+  man-in-the-middle section and its extension to the first exchange
+  (including what the address contains and what it does not), values
+  computed with a short script and checked.
 - The section *How a `.onion` address proves who you're talking to* (the
   color-mixing analogy) was written by Claude on claude.ai, in the form the
   author asked for; the author added it to this README. Claude Code then
@@ -441,7 +560,10 @@ used through Claude Code). How it was used, and who did what:
   presented with their trade-offs, including the text of the page.
 - The color-mixing analogy: the author chose to explain the address this way
   and asked for it in that form, and chose the Veritasium video as a
-  reference.
+  reference; the paint diagram (`diffie_hellman.webp`) was made by the author
+  from that video, and the author asked for the section explaining why a man
+  in the middle cannot decrypt the messages, then raised the question of the
+  first exchange and asked for the paint example to cover it.
 - Checks on a school machine (rootless Docker, Tor reachable), review and
   validation of the code and documents.
 
